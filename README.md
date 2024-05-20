@@ -1,4 +1,3 @@
-# Chaincode-token-erc-20
 # ERC-20 token scenario
 The ERC-20 token smart contract demonstrates how to create and transfer fungible tokens using an account-based model. In an ERC-20 account-based model, there is an account for each participant that holds a balance of tokens. A mint transaction creates tokens in an account, while a transfer transaction debits the caller's account and credits another account.
 
