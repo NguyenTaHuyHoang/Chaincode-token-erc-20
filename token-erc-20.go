@@ -2,8 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
+	"log"
 	"strconv"
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
@@ -69,6 +68,7 @@ func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) peer.Respons
 		return shim.Error("Invalid function name")
 	}
 }
+
 // Mint creates new tokens and adds them to minter's account balance
 // This function triggers a Transfer event
 func (s *SmartContract) Mint(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
@@ -291,7 +291,219 @@ func (s *SmartContract) ClientAccountID(APIstub shim.ChaincodeStubInterface, arg
 	return shim.Success([]byte(clientID))
 }
 
-// TotalSupply
+// TotalSupply returns the total supply of tokens
+func (s *SmartContract) TotalSupply(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	totalSupplyBytes, err := APIstub.GetState(totalSupplyKey)
+	if err != nil {
+		return shim.Error("Failed to get total supply")
+	}
+	if totalSupplyBytes == nil {
+		return shim.Error("Total supply not set")
+	}
+	return shim.Success(totalSupplyBytes)
+}
+
+// Approve allows `spender` to withdraw from `owner`'s account, multiple times, up to the `amount`.
+// If this function is called again it overwrites the current allowance with the `amount`.
+func (s *SmartContract) Approve(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	if len(args) != 3 {
+		return shim.Error("Incorrect number of arguments. Expecting 3")
+	}
+
+	owner := args[0]
+	spender := args[1]
+	amount, err := strconv.Atoi(args[2])
+	if err != nil {
+		return shim.Error("Invalid amount. Expecting a numeric string")
+	}
+
+	allowanceKey := allowancePrefix + owner + spender
+
+	err = APIstub.PutState(allowanceKey, []byte(strconv.Itoa(amount)))
+	if err != nil {
+		return shim.Error("Failed to set allowance")
+	}
+
+	return shim.Success(nil)
+}
+
+// Allowance returns the amount which `spender` is still allowed to withdraw from `owner`.
+func (s *SmartContract) Allowance(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
+	}
+
+	owner := args[0]
+	spender := args[1]
+	allowanceKey := allowancePrefix + owner + spender
+
+	allowanceBytes, err := APIstub.GetState(allowanceKey)
+	if err != nil {
+		return shim.Error("Failed to get allowance")
+	}
+	if allowanceBytes == nil {
+		return shim.Error("Allowance not found")
+	}
+	return shim.Success(allowanceBytes)
+}
+
+// TransferFrom transfers `amount` tokens from `from` to `to` using the allowance mechanism.
+// `amount` is then deducted from the caller’s allowance.
+func (s *SmartContract) TransferFrom(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	if len(args) != 4 {
+		return shim.Error("Incorrect number of arguments. Expecting 4")
+	}
+
+	owner := args[0]
+	spender := args[1]
+	to := args[2]
+	amount, err := strconv.Atoi(args[3])
+	if err != nil {
+		return shim.Error("Invalid amount. Expecting a numeric string")
+	}
+
+	allowanceKey := allowancePrefix + owner + spender
+
+	allowanceBytes, err := APIstub.GetState(allowanceKey)
+	if err != nil {
+		return shim.Error("Failed to get allowance")
+	}
+	if allowanceBytes == nil {
+		return shim.Error("Allowance not found")
+	}
+
+	allowance, _ := strconv.Atoi(string(allowanceBytes))
+	if allowance < amount {
+		return shim.Error("Allowance exceeded")
+	}
+
+	// Get balances of owner and recipient
+	fromBalanceBytes, err := APIstub.GetState(owner)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+	if fromBalanceBytes == nil {
+		return shim.Error("Owner account not found")
+	}
+	fromBalance, _ := strconv.Atoi(string(fromBalanceBytes))
+
+	toBalanceBytes, err := APIstub.GetState(to)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+	var toBalance int
+	if toBalanceBytes == nil {
+		toBalance = 0
+	} else {
+		toBalance, _ = strconv.Atoi(string(toBalanceBytes))
+	}
+
+	// Ensure owner has enough tokens to transfer
+	if fromBalance < amount {
+		return shim.Error("Insufficient balance")
+	}
+
+	// Transfer tokens
+	fromBalance -= amount
+	toBalance += amount
+
+	// Update owner's balance
+	err = APIstub.PutState(owner, []byte(strconv.Itoa(fromBalance)))
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	// Update recipient's balance
+	err = APIstub.PutState(to, []byte(strconv.Itoa(toBalance)))
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	// Update spender's allowance
+	allowance -= amount
+	err = APIstub.PutState(allowanceKey, []byte(strconv.Itoa(allowance)))
+	if err != nil {
+		return shim.Error("Failed to update allowance")
+	}
+
+	// Emit Transfer event
+	eventData := event{From: owner, To: to, Value: amount}
+	eventBytes, err := json.Marshal(eventData)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+	err = APIstub.SetEvent("Transfer", eventBytes)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	return shim.Success(nil)
+}
+
+// Name returns the name of the token
+func (s *SmartContract) Name(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	nameBytes, err := APIstub.GetState(nameKey)
+	if err != nil {
+		return shim.Error("Failed to get token name")
+	}
+	if nameBytes == nil {
+		return shim.Error("Token name not set")
+	}
+	return shim.Success(nameBytes)
+}
+
+// Symbol returns the symbol of the token
+func (s *SmartContract) Symbol(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	symbolBytes, err := APIstub.GetState(symbolKey)
+	if err != nil {
+		return shim.Error("Failed to get token symbol")
+	}
+	if symbolBytes == nil {
+		return shim.Error("Token symbol not set")
+	}
+	return shim.Success(symbolBytes)
+}
+
+// Initialize initializes the token's state (name, symbol, decimals, totalSupply)
+func (s *SmartContract) Initialize(APIstub shim.ChaincodeStubInterface, args []string) peer.Response {
+	if len(args) != 4 {
+		return shim.Error("Incorrect number of arguments. Expecting 4")
+	}
+
+	name := args[0]
+	symbol := args[1]
+	decimals, err := strconv.Atoi(args[2])
+	if err != nil {
+		return shim.Error("Invalid decimals. Expecting a numeric string")
+	}
+	totalSupply, err := strconv.Atoi(args[3])
+	if err != nil {
+		return shim.Error("Invalid total supply. Expecting a numeric string")
+	}
+
+	err = APIstub.PutState(nameKey, []byte(name))
+	if err != nil {
+		return shim.Error("Failed to set token name")
+	}
+
+	err = APIstub.PutState(symbolKey, []byte(symbol))
+	if err != nil {
+		return shim.Error("Failed to set token symbol")
+	}
+
+	err = APIstub.PutState(decimalsKey, []byte(strconv.Itoa(decimals)))
+	if err != nil {
+		return shim.Error("Failed to set token decimals")
+	}
+
+	err = APIstub.PutState(totalSupplyKey, []byte(strconv.Itoa(totalSupply)))
+	if err != nil {
+		return shim.Error("Failed to set token total supply")
+	}
+
+	return shim.Success(nil)
+}
+
 func main() {
 	err := shim.Start(new(SmartContract))
 	if err != nil {
