@@ -175,11 +175,14 @@ func (t *TokenERC20Chaincode) ClientAccountBalance(stub shim.ChaincodeStubInterf
 	}
 
 	// Get balance of client ID
-	balance, exists := token.Balance[clientID]
+	balance, exists := token.Balance[string(clientID)]
 	if !exists {
-		return shim.Error(fmt.Sprintf("Balance not found for client ID: %s", clientID))
+		// Initialize balance to 0 if client ID does not exist in map
+		balance = 0
+		token.Balance[string(clientID)] = balance
+		tokenJSON, _ := json.Marshal(token)
+		_ = stub.PutState("token", tokenJSON)
 	}
-
 	return shim.Success([]byte(strconv.FormatUint(balance, 10)))
 }
 
