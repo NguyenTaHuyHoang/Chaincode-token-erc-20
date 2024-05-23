@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -61,7 +62,7 @@ func (t *TokenERC20Chaincode) Initialize(stub shim.ChaincodeStubInterface, args 
 	}
 
 	// Set total supply to the balance of the transaction creator
-	token.Balance[string(creator)] = totalSupply
+	token.Balance[hex.EncodeToString(creator)] = totalSupply
 
 	// Save the token state to the ledger
 	tokenJSON, err := json.Marshal(token)
@@ -132,8 +133,9 @@ func (t *TokenERC20Chaincode) Mint(stub shim.ChaincodeStubInterface, args []stri
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to get creator: %s", err))
 	}
+	creatorHex := hex.EncodeToString(creator)
 	token.Total += amount
-	token.Balance[string(creator)] += amount
+	token.Balance[creatorHex] += amount
 
 	// Update token state
 	tokenJSON, err = json.Marshal(token)
@@ -146,7 +148,7 @@ func (t *TokenERC20Chaincode) Mint(stub shim.ChaincodeStubInterface, args []stri
 	}
 
 	// Trigger Transfer event
-	err = stub.SetEvent("Transfer", []byte(fmt.Sprintf("Minted %d tokens to %s", amount, string(creator))))
+	err = stub.SetEvent("Transfer", []byte(fmt.Sprintf("Minted %d tokens to %s", amount, creatorHex)))
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to set event: %s", err))
 	}
@@ -157,11 +159,10 @@ func (t *TokenERC20Chaincode) Mint(stub shim.ChaincodeStubInterface, args []stri
 // ClientAccountBalance retrieves the account balance of the client's account
 func (t *TokenERC20Chaincode) ClientAccountBalance(stub shim.ChaincodeStubInterface) pb.Response {
 	// Get client ID
-	clientIDResp := t.ClientAccountID(stub)
-	if clientIDResp.Status != shim.OK {
-		return shim.Error(fmt.Sprintf("Failed to get client ID: %s", clientIDResp.Message))
+	clientID, err := stub.GetCreator()
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get client ID: %s", err))
 	}
-	clientID := string(clientIDResp.Payload)
 
 	// Load token state
 	tokenJSON, err := stub.GetState("token")
@@ -173,17 +174,24 @@ func (t *TokenERC20Chaincode) ClientAccountBalance(stub shim.ChaincodeStubInterf
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
 	}
-
 	// Get balance of client ID
-	balance, exists := token.Balance[string(clientID)]
+	clientIDHex := hex.EncodeToString(clientID)
+	balance, exists := token.Balance[clientIDHex]
 	if !exists {
 		// Initialize balance to 0 if client ID does not exist in map
 		balance = 0
-		token.Balance[string(clientID)] = balance
-		tokenJSON, _ := json.Marshal(token)
-		_ = stub.PutState("token", tokenJSON)
+		token.Balance[clientIDHex] = balance
+		tokenJSON, err := json.Marshal(token)
+		if err != nil {
+			return shim.Error(fmt.Sprintf("Failed to marshal token: %s", err))
+		}
+		err = stub.PutState("token", tokenJSON)
+		if err != nil {
+			return shim.Error(fmt.Sprintf("Failed to update token state: %s", err))
+		}
 	}
-	return shim.Success([]byte(strconv.FormatUint(balance, 10)))
+
+	return shim.Success([]byte(fmt.Sprintf("%d", balance)))
 }
 
 // ClientAccountID retrieves the client account ID
@@ -276,9 +284,11 @@ func (t *TokenERC20Chaincode) balanceOf(stub shim.ChaincodeStubInterface, args [
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
 	}
+	// Convert address to hex
+	addressHex := hex.EncodeToString([]byte(address))
 
 	// Get balance of specified address
-	balance, exists := token.Balance[address]
+	balance, exists := token.Balance[addressHex]
 	if !exists {
 		return shim.Error(fmt.Sprintf("No balance found for address: %s", address))
 	}
