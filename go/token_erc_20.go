@@ -221,7 +221,6 @@ func (t *TokenERC20Chaincode) transfer(stub shim.ChaincodeStubInterface, args []
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Invalid amount: %s", err))
 	}
-
 	// Load token state
 	tokenJSON, err := stub.GetState("token")
 	if err != nil {
@@ -238,11 +237,12 @@ func (t *TokenERC20Chaincode) transfer(stub shim.ChaincodeStubInterface, args []
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to get creator: %s", err))
 	}
-	senderBalance := token.Balance[string(sender)]
+	senderHex := hex.EncodeToString(sender)
+	senderBalance := token.Balance[senderHex]
 	if senderBalance < amount {
 		return shim.Error("Insufficient balance")
 	}
-	token.Balance[string(sender)] -= amount
+	token.Balance[senderHex] -= amount
 
 	// Add amount to receiver's balance
 	receiver := args[0]
