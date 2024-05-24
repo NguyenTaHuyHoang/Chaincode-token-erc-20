@@ -202,7 +202,9 @@ func (t *TokenERC20Chaincode) ClientAccountID(stub shim.ChaincodeStubInterface) 
 		return shim.Error(fmt.Sprintf("Failed to get client ID: %s", err))
 	}
 
-	return shim.Success([]byte(clientID))
+	// encodedClientID := base64.StdEncoding.EncodeToString(clientID)
+	addressHex := hex.EncodeToString([]byte(clientID))
+	return shim.Success([]byte(addressHex))
 }
 
 // Transfer transfers tokens from client account to recipient account
@@ -284,11 +286,9 @@ func (t *TokenERC20Chaincode) balanceOf(stub shim.ChaincodeStubInterface, args [
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
 	}
-	// Convert address to hex
-	addressHex := hex.EncodeToString([]byte(address))
 
 	// Get balance of specified address
-	balance, exists := token.Balance[addressHex]
+	balance, exists := token.Balance[address]
 	if !exists {
 		return shim.Error(fmt.Sprintf("No balance found for address: %s", address))
 	}
