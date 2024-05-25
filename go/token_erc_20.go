@@ -90,15 +90,21 @@ func (t *TokenERC20Chaincode) Invoke(stub shim.ChaincodeStubInterface) pb.Respon
 	case "ClientAccountID":
 		return t.ClientAccountID(stub)
 	case "transfer":
-		return t.transfer(stub, args)
+		return t.Transfer(stub, args)
+	case "Approve":
+		return t.Approve(stub, args)
+	case "Allowance":
+		return t.Allowance(stub, args)
+	case "transferFrom":
+		return t.TransferFrom(stub, args)
 	case "balanceOf":
-		return t.balanceOf(stub, args)
+		return t.BalanceOf(stub, args)
 	case "name":
-		return t.name(stub)
+		return t.Name(stub)
 	case "symbol":
-		return t.symbol(stub)
+		return t.Symbol(stub)
 	case "totalSupply":
-		return t.totalSupply(stub)
+		return t.TotalSupply(stub)
 	}
 	return shim.Error("Invalid function name")
 }
@@ -210,7 +216,7 @@ func (t *TokenERC20Chaincode) ClientAccountID(stub shim.ChaincodeStubInterface) 
 // Transfer transfers tokens from client account to recipient account
 // recipient account must be a valid clientID as returned by the ClientID() function
 // This function triggers a Transfer event
-func (t *TokenERC20Chaincode) transfer(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+func (t *TokenERC20Chaincode) Transfer(stub shim.ChaincodeStubInterface, args []string) pb.Response {
 	// Check number of arguments
 	if len(args) != 2 {
 		return shim.Error("Incorrect number of arguments. Expecting 2: to address and amount")
@@ -261,8 +267,153 @@ func (t *TokenERC20Chaincode) transfer(stub shim.ChaincodeStubInterface, args []
 	return shim.Success(nil)
 }
 
+// Approve allows spender to withdraw from owner's account multiple times, up to the amount
+// This function triggers an Approval event
+func (t *TokenERC20Chaincode) Approve(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+	// Check number of arguments
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2: spender address and amount")
+	}
+
+	// Parse amount
+	amount, err := strconv.ParseUint(args[1], 10, 64)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Invalid amount: %s", err))
+	}
+
+	// Load token state
+	tokenJSON, err := stub.GetState("token")
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get token: %s", err))
+	}
+	var token Token
+	err = json.Unmarshal(tokenJSON, &token)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
+	}
+
+	// Get owner's address
+	owner, err := stub.GetCreator()
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get creator: %s", err))
+	}
+	ownerHex := hex.EncodeToString(owner)
+	// Set allowance of spender from owner
+	spender := args[0]
+	token.Balance[ownerHex+"_"+spender] = amount
+
+	// Update token state
+	tokenJSON, err = json.Marshal(token)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to marshal token: %s", err))
+	}
+	err = stub.PutState("token", tokenJSON)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to put state: %s", err))
+	}
+
+	// Trigger Approval event
+	err = stub.SetEvent("Approval", []byte(fmt.Sprintf("Approved %d tokens to %s", amount, spender)))
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to set event: %s", err))
+	}
+
+	return shim.Success(nil)
+}
+
+// Allowance returns the amount which spender is still allowed to withdraw from owner
+func (t *TokenERC20Chaincode) Allowance(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+	// Check number of arguments
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2: owner address and spender address")
+	}
+
+	owner := args[0]
+	spender := args[1]
+
+	// Load token state
+	tokenJSON, err := stub.GetState("token")
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get token: %s", err))
+	}
+	var token Token
+	err = json.Unmarshal(tokenJSON, &token)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
+	}
+
+	// Get allowance of spender from owner
+	allowance, exists := token.Balance[owner+"_"+spender]
+	if !exists {
+		return shim.Error("No allowance found")
+	}
+
+	return shim.Success([]byte(fmt.Sprintf("%d", allowance)))
+}
+
+func (t *TokenERC20Chaincode) TransferFrom(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+	// Check number of arguments
+	if len(args) != 3 {
+		return shim.Error("Incorrect number of arguments. Expecting 3: from address, to address, and amount")
+	}
+
+	// Load token state
+	sender := args[0]
+	receiver := args[1]
+	// Parse amount
+	amount, err := strconv.ParseUint(args[2], 10, 64)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Invalid amount: %s", err))
+	}
+
+	// Load token state
+	tokenJSON, err := stub.GetState("token")
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get token: %s", err))
+	}
+	var token Token
+	err = json.Unmarshal(tokenJSON, &token)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
+	}
+
+	// Check the allowance of the sender
+	allowance, exists := token.Balance[sender+"_"+receiver]
+	if !exists {
+		return shim.Error("No allowance found")
+	}
+	if allowance < amount {
+		return shim.Error("Insufficient allowance")
+	}
+
+	// Deduct the amount from the sender's allowance
+	token.Balance[sender+"_"+receiver] -= amount
+
+	// Deduct amount from sender's balance
+	senderBalance := token.Balance[sender]
+	if senderBalance < amount {
+		return shim.Error("Insufficient balance")
+	}
+	token.Balance[sender] -= amount
+
+	// Add amount to receiver's balance
+	token.Balance[receiver] += amount
+
+	// Update token state
+	tokenJSON, err = json.Marshal(token)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to marshal token: %s", err))
+	}
+	err = stub.PutState("token", tokenJSON)
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to put state: %s", err))
+	}
+
+	return shim.Success(nil)
+}
+
 // BalanceOf returns the balance of the given account
-func (t *TokenERC20Chaincode) balanceOf(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+func (t *TokenERC20Chaincode) BalanceOf(stub shim.ChaincodeStubInterface, args []string) pb.Response {
 	// Check number of arguments
 	if len(args) != 1 {
 		return shim.Error("Incorrect number of arguments. Expecting 1: to address")
@@ -298,7 +449,7 @@ func (t *TokenERC20Chaincode) balanceOf(stub shim.ChaincodeStubInterface, args [
 
 // Name returns a descriptive name for fungible tokens in this contract
 // returns {String} Returns the name of the token
-func (t *TokenERC20Chaincode) name(stub shim.ChaincodeStubInterface) pb.Response {
+func (t *TokenERC20Chaincode) Name(stub shim.ChaincodeStubInterface) pb.Response {
 	// Load token state
 	tokenJSON, err := stub.GetState("token")
 	if err != nil {
@@ -315,7 +466,7 @@ func (t *TokenERC20Chaincode) name(stub shim.ChaincodeStubInterface) pb.Response
 
 // Symbol returns an abbreviated name for fungible tokens in this contract.
 // returns {String} Returns the symbol of the token
-func (t *TokenERC20Chaincode) symbol(stub shim.ChaincodeStubInterface) pb.Response {
+func (t *TokenERC20Chaincode) Symbol(stub shim.ChaincodeStubInterface) pb.Response {
 	// Load token state
 	tokenJSON, err := stub.GetState("token")
 	if err != nil {
@@ -331,7 +482,7 @@ func (t *TokenERC20Chaincode) symbol(stub shim.ChaincodeStubInterface) pb.Respon
 }
 
 // TotalSupply returns the total token supply
-func (t *TokenERC20Chaincode) totalSupply(stub shim.ChaincodeStubInterface) pb.Response {
+func (t *TokenERC20Chaincode) TotalSupply(stub shim.ChaincodeStubInterface) pb.Response {
 	// Load token state
 	tokenJSON, err := stub.GetState("token")
 	if err != nil {
