@@ -292,15 +292,16 @@ func (t *TokenERC20Chaincode) Approve(stub shim.ChaincodeStubInterface, args []s
 		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
 	}
 
-	// Get owner's address
-	owner, err := stub.GetCreator()
+	// Get miner's address
+	miner, err := stub.GetCreator()
 	if err != nil {
 		return shim.Error(fmt.Sprintf("Failed to get creator: %s", err))
 	}
-	ownerHex := hex.EncodeToString(owner)
+	minerHex := hex.EncodeToString(miner)
+
 	// Set allowance of spender from owner
 	spender := args[0]
-	token.Balance[ownerHex+"_"+spender] = amount
+	token.Balance[minerHex+"_"+spender] = amount
 
 	// Update token state
 	tokenJSON, err = json.Marshal(token)
@@ -328,7 +329,7 @@ func (t *TokenERC20Chaincode) Allowance(stub shim.ChaincodeStubInterface, args [
 		return shim.Error("Incorrect number of arguments. Expecting 2: owner address and spender address")
 	}
 
-	owner := args[0]
+	miner := args[0]
 	spender := args[1]
 
 	// Load token state
@@ -343,7 +344,7 @@ func (t *TokenERC20Chaincode) Allowance(stub shim.ChaincodeStubInterface, args [
 	}
 
 	// Get allowance of spender from owner
-	allowance, exists := token.Balance[owner+"_"+spender]
+	allowance, exists := token.Balance[miner+"_"+spender]
 	if !exists {
 		return shim.Error("No allowance found")
 	}
@@ -360,6 +361,7 @@ func (t *TokenERC20Chaincode) TransferFrom(stub shim.ChaincodeStubInterface, arg
 	// Load token state
 	sender := args[0]
 	receiver := args[1]
+
 	// Parse amount
 	amount, err := strconv.ParseUint(args[2], 10, 64)
 	if err != nil {
@@ -377,8 +379,15 @@ func (t *TokenERC20Chaincode) TransferFrom(stub shim.ChaincodeStubInterface, arg
 		return shim.Error(fmt.Sprintf("Failed to unmarshal token: %s", err))
 	}
 
+	// Get spider's address
+	spender, err := stub.GetCreator()
+	if err != nil {
+		return shim.Error(fmt.Sprintf("Failed to get creator: %s", err))
+	}
+	spenderHex := hex.EncodeToString(spender)
+
 	// Check the allowance of the sender
-	allowance, exists := token.Balance[sender+"_"+receiver]
+	allowance, exists := token.Balance[sender+"_"+spenderHex]
 	if !exists {
 		return shim.Error("No allowance found")
 	}
@@ -387,7 +396,7 @@ func (t *TokenERC20Chaincode) TransferFrom(stub shim.ChaincodeStubInterface, arg
 	}
 
 	// Deduct the amount from the sender's allowance
-	token.Balance[sender+"_"+receiver] -= amount
+	token.Balance[sender+"_"+spenderHex] -= amount
 
 	// Deduct amount from sender's balance
 	senderBalance := token.Balance[sender]
